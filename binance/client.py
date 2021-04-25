@@ -5778,6 +5778,23 @@ class Client(object):
         """
         return self._request_futures_coin_api("get", "positionSide/dual", True, data=params)
 
+    def futures_coin_stream_get_listen_key(self):
+        res = self._request_futures_coin_api('post', 'listenKey', signed=False, data={})
+        return res['listenKey']
+
+    def futures_coin_stream_keepalive(self, listenKey):
+        params = {
+            'listenKey': listenKey
+        }
+        return self._request_futures_coin_api('put', 'listenKey', signed=False, data=params)
+
+    def futures_coin_stream_close(self, listenKey):
+
+        params = {
+            'listenKey': listenKey
+        }
+        return self._request_futures_coin_api('delete', 'listenKey', signed=False, data=params)
+
     def get_all_coins_info(self, **params):
         """Get information of coins (available for deposit and withdraw) for user.
 

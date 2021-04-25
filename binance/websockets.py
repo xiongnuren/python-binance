@@ -71,6 +71,7 @@ class BinanceSocketManager(threading.Thread):
 
     STREAM_URL = 'wss://stream.binance.com:9443/'
     FSTREAM_URL = 'wss://fstream.binance.com/'
+    DSTREAM_URL = 'wss://dstream.binance.com/'
     VSTREAM_URL = 'wss://vstream.binance.com/'
     VSTREAM_TESTNET_URL = 'wss://testnetws.binanceops.com/'
 
@@ -93,9 +94,9 @@ class BinanceSocketManager(threading.Thread):
         self._conns = {}
         self._client = client
         self._user_timeout = user_timeout
-        self._timers = {'user': None, 'margin': None, 'futures': None}
-        self._listen_keys = {'user': None, 'margin': None, 'futures': None}
-        self._account_callbacks = {'user': None, 'margin': None, 'futures': None}
+        self._timers = {'user': None, 'margin': None, 'futures': None, 'futures_coin': None}
+        self._listen_keys = {'user': None, 'margin': None, 'futures': None, 'futures_coin': None}
+        self._account_callbacks = {'user': None, 'margin': None, 'futures': None, 'futures_coin': None}
         # Isolated margin sockets will be opened under the 'symbol' name
 
         self.testnet = self._client.testnet
@@ -122,6 +123,20 @@ class BinanceSocketManager(threading.Thread):
             return False
 
         factory_url = self.FSTREAM_URL + prefix + path
+        factory = BinanceClientFactory(factory_url)
+        factory.protocol = BinanceClientProtocol
+        factory.callback = callback
+        factory.reconnect = True
+        context_factory = ssl.ClientContextFactory()
+
+        self._conns[path] = connectWS(factory, context_factory)
+        return path
+
+    def _start_futures_coin_socket(self, path, callback, prefix='stream?streams='):
+        if path in self._conns:
+            return False
+
+        factory_url = self.DSTREAM_URL + prefix + path
         factory = BinanceClientFactory(factory_url)
         factory.protocol = BinanceClientProtocol
         factory.callback = callback
@@ -716,10 +731,10 @@ class BinanceSocketManager(threading.Thread):
         return self._start_account_socket('user', user_listen_key, callback)
 
     def start_futures_user_socket(self, callback):
-        """Start a websocket for user data
+        """Start a websocket for USD-margined futures user data
 
         https://github.com/binance-exchange/binance-official-api-docs/blob/master/user-data-stream.md
-        https://binance-docs.github.io/apidocs/spot/en/#listen-key-spot
+        https://binance-docs.github.io/apidocs/futures/en/#start-user-data-stream-user_stream
 
         :param callback: callback function to handle messages
         :type callback: function
@@ -732,6 +747,24 @@ class BinanceSocketManager(threading.Thread):
         user_listen_key = self._client.futures_stream_get_listen_key()
         # and start the socket with this specific key
         return self._start_account_futures_socket('futures', user_listen_key, callback)
+
+    def start_futures_coin_user_socket(self, callback):
+        """Start a websocket for coin-margined futures user data
+
+        https://github.com/binance-exchange/binance-official-api-docs/blob/master/user-data-stream.md
+        https://binance-docs.github.io/apidocs/delivery/en/#start-user-data-stream-user_stream
+
+        :param callback: callback function to handle messages
+        :type callback: function
+
+        :returns: connection key string if successful, False otherwise
+
+        Message Format - see Binance API docs for all types
+        """
+        # Get the user listen key
+        user_listen_key = self._client.futures_coin_stream_get_listen_key()
+        # and start the socket with this specific key
+        return self._start_account_futures_coin_socket('futures', user_listen_key, callback)
 
     def start_margin_socket(self, callback):
         """Start a websocket for cross-margin data
@@ -833,11 +866,22 @@ class BinanceSocketManager(threading.Thread):
         return conn_key
 
     def _start_account_futures_socket(self, socket_type, listen_key, callback):
-        """Starts futures account socket"""
+        """Starts USD-margined futures account socket"""
         self._check_account_socket_open(listen_key)
         self._listen_keys[socket_type] = listen_key
         self._account_callbacks[socket_type] = callback
         conn_key = self._start_futures_socket(listen_key, callback, "ws/")
+        if conn_key:
+            # start timer to keep socket alive
+            self._start_socket_timer(socket_type)
+        return conn_key
+
+    def _start_account_futures_coin_socket(self, socket_type, listen_key, callback):
+        """Starts coin-margined futures account socket"""
+        self._check_account_socket_open(listen_key)
+        self._listen_keys[socket_type] = listen_key
+        self._account_callbacks[socket_type] = callback
+        conn_key = self._start_futures_coin_socket(listen_key, callback, "ws/")
         if conn_key:
             # start timer to keep socket alive
             self._start_socket_timer(socket_type)
@@ -868,6 +912,10 @@ class BinanceSocketManager(threading.Thread):
             listen_key = listen_key_func()
         elif socket_type == 'futures':
             listen_key_func = self._client.futures_stream_get_listen_key
+            callback = self._account_callbacks[socket_type]
+            listen_key = listen_key_func()
+        elif socket_type == 'futures_coin':
+            listen_key_func = self._client.futures_coin_stream_get_listen_key
             callback = self._account_callbacks[socket_type]
             listen_key = listen_key_func()
         else:  # isolated margin
