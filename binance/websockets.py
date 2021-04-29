@@ -930,6 +930,10 @@ class BinanceSocketManager(threading.Thread):
                 self._client.stream_keepalive(listen_key)
             elif socket_type == 'margin':  # cross-margin
                 self._client.margin_stream_keepalive(listen_key)
+            elif socket_type == 'futures':
+                self._client.futures_stream_keepalive(listen_key)
+            elif socket_type == 'futures_coin':
+                self._client.futures_coin_stream_keepalive(listen_key)
             else:  # isolated margin
                 self._client.isolated_margin_stream_keepalive(socket_type, listen_key)  # Passing symbol for isolated margin
             self._start_socket_timer(socket_type)
